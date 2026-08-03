@@ -110,8 +110,13 @@ jobs:
     - name: Upload to App Store Connect
       env:
         ASC_API_KEY_CONTENT: ${{ secrets.ASC_API_KEY_CONTENT }}
+        APP_ID: "6797521443"
       run: |
-        echo "$ASC_API_KEY_CONTENT" | base64 -D > /tmp/asc_key.p8
+        if echo "$ASC_API_KEY_CONTENT" | grep -q "BEGIN PRIVATE KEY"; then
+          printf '%s' "$ASC_API_KEY_CONTENT" > /tmp/asc_key.p8
+        else
+          echo "$ASC_API_KEY_CONTENT" | base64 -D > /tmp/asc_key.p8
+        fi
         pip install PyJWT requests cryptography
         python scripts/upload_screenshots.py
         rm /tmp/asc_key.p8
