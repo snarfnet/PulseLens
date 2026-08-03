@@ -1,0 +1,117 @@
+name: Take Screenshots & Upload to ASC
+
+on:
+  workflow_dispatch:
+
+jobs:
+  screenshots:
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Select Xcode
+      run: |
+        XCODE_APP=$(ls /Applications/ | grep -E "^Xcode_2[6-9]|^Xcode_[3-9][0-9]" | sort -V | tail -1)
+        if [ -n "$XCODE_APP" ]; then
+          sudo xcode-select -s "/Applications/$XCODE_APP"
+        else
+          XCODE_APP=$(ls /Applications/ | grep "^Xcode_" | sort -V | tail -1)
+          sudo xcode-select -s "/Applications/$XCODE_APP"
+        fi
+        xcodebuild -version
+
+    - name: Install XcodeGen
+      run: brew install xcodegen
+
+    - name: Generate Xcode project
+      run: xcodegen generate
+
+    - name: Find Simulators
+      run: |
+        set +e
+        DEVICES=$(xcrun simctl list devices available)
+        echo "$DEVICES"
+        pick() { echo "$DEVICES" | grep -E "$1" | head -1 | grep -oE '[0-9A-F-]{36}'; }
+        IPHONE_ID=$(pick "iPhone .*Pro Max")
+        [ -z "$IPHONE_ID" ] && IPHONE_ID=$(pick "iPhone .*Pro")
+        [ -z "$IPHONE_ID" ] && IPHONE_ID=$(pick "iPhone")
+        IPAD_ID=$(pick "iPad Pro.*(13|12.9)")
+        [ -z "$IPAD_ID" ] && IPAD_ID=$(pick "iPad Pro")
+        [ -z "$IPAD_ID" ] && IPAD_ID=$(pick "iPad")
+        echo "IPHONE_ID=$IPHONE_ID" >> $GITHUB_ENV
+        echo "IPAD_ID=$IPAD_ID" >> $GITHUB_ENV
+        echo "iPhone: $IPHONE_ID / iPad: $IPAD_ID"
+        if [ -z "$IPHONE_ID" ] || [ -z "$IPAD_ID" ]; then
+          echo "Missing a simulator"; exit 1
+        fi
+
+    - name: Build for iPhone Simulator
+      run: |
+        xcodebuild build \
+          -scheme PulseLens \
+          -configuration Debug \
+          -destination "id=$IPHONE_ID" \
+          -derivedDataPath build/DerivedData \
+          CODE_SIGN_IDENTITY="" \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGNING_ALLOWED=NO
+
+    - name: Take iPhone Screenshots
+      run: |
+        xcrun simctl boot "$IPHONE_ID" || true
+        xcrun simctl bootstatus "$IPHONE_ID" -b
+        APP_PATH=$(find build/DerivedData -name "PulseLens.app" -type d | head -1)
+        xcrun simctl install "$IPHONE_ID" "$APP_PATH"
+        mkdir -p screenshots
+        for MODE in 1 2 3 4; do
+          xcrun simctl terminate "$IPHONE_ID" com.tokyonasu.PulseLens 2>/dev/null || true
+          sleep 2
+          xcrun simctl launch "$IPHONE_ID" com.tokyonasu.PulseLens SCREENSHOT_MODE_$MODE
+          sleep 12
+          xcrun simctl io "$IPHONE_ID" screenshot "screenshots/iphone_67_$MODE.png"
+        done
+        xcrun simctl shutdown "$IPHONE_ID" || true
+
+    - name: Build for iPad Simulator
+      run: |
+        xcodebuild build \
+          -scheme PulseLens \
+          -configuration Debug \
+          -destination "id=$IPAD_ID" \
+          -derivedDataPath build/DerivedDataiPad \
+          CODE_SIGN_IDENTITY="" \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGNING_ALLOWED=NO
+
+    - name: Take iPad Screenshots
+      run: |
+        xcrun simctl boot "$IPAD_ID" || true
+        xcrun simctl bootstatus "$IPAD_ID" -b
+        APP_PATH=$(find build/DerivedDataiPad -name "PulseLens.app" -type d | head -1)
+        if [ -z "$APP_PATH" ]; then
+          APP_PATH=$(find build/DerivedData -name "PulseLens.app" -type d | head -1)
+        fi
+        xcrun simctl install "$IPAD_ID" "$APP_PATH"
+        for MODE in 1 2 3 4; do
+          xcrun simctl terminate "$IPAD_ID" com.tokyonasu.PulseLens 2>/dev/null || true
+          sleep 2
+          xcrun simctl launch "$IPAD_ID" com.tokyonasu.PulseLens SCREENSHOT_MODE_$MODE
+          sleep 12
+          xcrun simctl io "$IPAD_ID" screenshot "screenshots/ipad_129_$MODE.png"
+        done
+
+    - name: Upload screenshots artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: screenshots
+        path: screenshots/
+
+    - name: Upload to App Store Connect
+      env:
+        ASC_API_KEY_CONTENT: ${{ secrets.ASC_API_KEY_CONTENT }}
+      run: |
+        echo "$ASC_API_KEY_CONTENT" | base64 -D > /tmp/asc_key.p8
+        pip install PyJWT requests cryptography
+        python scripts/upload_screenshots.py
+        rm /tmp/asc_key.p8

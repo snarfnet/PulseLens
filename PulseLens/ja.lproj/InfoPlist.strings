@@ -1,0 +1,2 @@
+"CFBundleDisplayName" = "パルスレンズ";
+"NSCameraUsageDescription" = "指先を通る光から脈拍を読み取るために、背面カメラとフラッシュを使用します。映像の保存や送信は一切行いません。";

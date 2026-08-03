@@ -1,0 +1,73 @@
+name: Build & Upload TestFlight
+
+# PulseLens CI: archive + upload to TestFlight via ASC API key
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: pulselens-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          XCODE_APP=$(ls /Applications/ | grep "^Xcode_" | sort -V | tail -1)
+          if [ -n "$XCODE_APP" ]; then
+            sudo xcode-select -s "/Applications/$XCODE_APP"
+          fi
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Set up ASC API Key
+        env:
+          ASC_API_KEY_CONTENT: ${{ secrets.ASC_API_KEY_CONTENT }}
+        run: |
+          test -n "$ASC_API_KEY_CONTENT"
+          mkdir -p ~/.appstoreconnect/private_keys
+          if echo "$ASC_API_KEY_CONTENT" | grep -q "BEGIN PRIVATE KEY"; then
+            printf '%s' "$ASC_API_KEY_CONTENT" > ~/.appstoreconnect/private_keys/AuthKey_WDXGY9WX55.p8
+          else
+            echo "$ASC_API_KEY_CONTENT" | base64 -D > ~/.appstoreconnect/private_keys/AuthKey_WDXGY9WX55.p8
+          fi
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Archive
+        run: |
+          BUILD_NUMBER=$((GITHUB_RUN_NUMBER + 200))
+          echo "Using build number $BUILD_NUMBER"
+          xcodebuild archive \
+            -project PulseLens.xcodeproj \
+            -scheme PulseLens \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath build/PulseLens.xcarchive \
+            CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM=83VGKGSQUH \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_WDXGY9WX55.p8 \
+            -authenticationKeyID WDXGY9WX55 \
+            -authenticationKeyIssuerID 2be0734f-943a-4d61-9dc9-5d9045c46fec
+
+      - name: Export & Upload
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath build/PulseLens.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist export_options.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_WDXGY9WX55.p8 \
+            -authenticationKeyID WDXGY9WX55 \
+            -authenticationKeyIssuerID 2be0734f-943a-4d61-9dc9-5d9045c46fec
