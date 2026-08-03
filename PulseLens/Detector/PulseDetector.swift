@@ -167,7 +167,7 @@ final class PulseDetector: NSObject, ObservableObject {
         do {
             try cam.lockForConfiguration()
             if on {
-                try cam.setTorchModeOnWithLevel(min(0.7, AVCaptureDevice.maxAvailableTorchLevel))
+                try cam.setTorchModeOn(level: min(0.7, AVCaptureDevice.maxAvailableTorchLevel))
             } else {
                 cam.torchMode = .off
             }
